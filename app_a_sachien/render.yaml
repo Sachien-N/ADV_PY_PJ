@@ -1,0 +1,23 @@
+# Render.com Blueprint for Application A backend (free tier).
+services:
+  - type: web
+    name: sachien-expense-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL   # set to Neon pooled URL in the dashboard
+        sync: false
+      - key: API_TOKEN
+        sync: false
+      - key: SUBSCRIPTION_API_URL
+        sync: false
+      - key: SUBSCRIPTION_API_TOKEN
+        sync: false
+      - key: ELECTRICITY_API_URL
+        sync: false
+      - key: ELECTRICITY_API_TOKEN
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://sachien-expense.streamlit.app
