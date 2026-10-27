@@ -103,10 +103,30 @@ def list_subscriptions(
 @router.post("/subscriptions", response_model=SubscriptionOut, status_code=201,
              dependencies=[Depends(require_token)])
 def create_subscription(payload: SubscriptionCreate, db: Session = Depends(get_db)):
-    sub = Subscription(**payload.model_dump())
-    sub.plan_key = _plan_key(sub.plan)
+    data = payload.model_dump()
+    plan_val = data.pop("plan", None)
+    sub = Subscription(**data)
+    # Assign explicitly so the normalization applies even when `plan` is omitted.
+    sub.plan = plan_val
+    sub.plan_key = _plan_key(plan_val)
     if sub.next_renewal is None:
         sub.next_renewal = compute_next_renewal(sub.start_date, sub.billing_frequency)
+    # Application-level duplicate check (portable across SQLite/PostgreSQL):
+    # NULL-ability of the raw `plan` column makes the DB UNIQUE constraint
+    # unreliable on some backends, so we detect duplicates before inserting.
+    dup = db.scalar(
+        select(Subscription).where(
+            Subscription.service_name == sub.service_name,
+            Subscription.plan_key == sub.plan_key,
+            Subscription.billing_frequency == sub.billing_frequency,
+        )
+    )
+    if dup:
+        raise HTTPException(
+            409,
+            f"A {sub.billing_frequency} subscription '{sub.service_name}' "
+            f"(plan {sub.plan or '-'}) already exists",
+        )
     db.add(sub)
     try:
         db.commit()
