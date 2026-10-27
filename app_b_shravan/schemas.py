@@ -167,7 +167,7 @@ class ExportBundle(BaseModel):
 
 
 class ExternalCategoryMap(BaseModel):
-    """Validates Application A's /categories response."""
+    """Validates Application A's /categories response (list or {'categories': [...]})."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -175,9 +175,11 @@ class ExternalCategoryMap(BaseModel):
 
     @classmethod
     def from_response(cls, data: object) -> "ExternalCategoryMap":
+        if isinstance(data, dict) and isinstance(data.get("categories"), list):
+            return cls(categories=[str(c) for c in data["categories"]])
         if isinstance(data, list):
             return cls(categories=[str(c) for c in data])
-        raise ValueError("Application A /categories must return a JSON list")
+        raise ValueError("Application A /categories must return a JSON list or {categories:[...]}")
 
 
 class SyncResult(BaseModel):

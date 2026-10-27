@@ -32,7 +32,11 @@ class ExpenseBase(BaseModel):
 
 
 class ExpenseCreate(ExpenseBase):
-    pass
+    # Optional push-integration fields (used by peer apps, e.g. App C).
+    # Manual clients simply omit them; they are ignored on PUT updates so
+    # automatic imports never overwrite manual provenance fields.
+    source_app: str | None = Field(default=None, max_length=30)
+    external_id: str | None = Field(default=None, max_length=120)
 
 
 class ExpenseUpdate(BaseModel):

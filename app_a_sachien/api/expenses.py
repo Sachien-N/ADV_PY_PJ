@@ -128,7 +128,20 @@ def list_expenses(
 
 @router.post("/expenses", response_model=ExpenseOut, status_code=201, dependencies=[Depends(require_token)])
 def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db)):
-    expense = Expense(**payload.model_dump())
+    data = payload.model_dump()
+    source = data.pop("source_app", None) or "manual"
+    external_id = data.pop("external_id", None)
+    if source not in ("manual", "subscription", "electricity"):
+        raise HTTPException(422, "source_app must be manual|subscription|electricity")
+    if source != "manual" and not external_id:
+        raise HTTPException(422, "external_id is required for imported records")
+    if source != "manual" and external_id:
+        existing = db.scalar(
+            select(Expense).where(Expense.source == source, Expense.external_id == external_id)
+        )
+        if existing:  # idempotent import: never duplicate
+            return existing
+    expense = Expense(source=source, external_id=external_id, **data)
     db.add(expense)
     db.commit()
     db.refresh(expense)
