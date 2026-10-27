@@ -66,7 +66,8 @@ def test_invalid_payloads_422(client, payload, field):
     assert r.status_code == 422, f"{field} should be rejected"
 
 
-def test_duplicate_subscription_409(client):
+def test_duplicate_subscription_409(client, sample):
+    # `sample` creates the first Netflix subscription; this POST is the duplicate.
     r = client.post("/subscriptions", json={
         "service_name": "Netflix", "amount": "499", "billing_frequency": "monthly",
         "start_date": "2026-01-15",

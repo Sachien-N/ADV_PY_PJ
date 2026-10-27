@@ -7,9 +7,10 @@ protection.
 """
 from __future__ import annotations
 
-import os
 from decimal import Decimal
 from unittest.mock import patch
+
+from main import app  # provided by conftest sys.path setup
 
 APP_A_CATEGORIES = ["Food", "Travel", "Bills", "Entertainment",
                     "Shopping", "Subscriptions", "Other"]
@@ -79,24 +80,50 @@ def test_export_feed_only_recorded_charges(client):
 
 
 def test_export_records_validate_against_app_a_schema(client):
-    """Replay the exact Pydantic model Application A uses to validate our feed."""
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..",
-                                    "app_a_sachien"))
+    """Validate our feed against a local replica of App A's ExternalElectricityExpense.
+
+    Contract source: app_a_sachien/schemas.py::ExternalElectricityExpense.
+    We deliberately do NOT import App A's package inside App C's test session
+    (module-name collisions between the two independent projects); instead this
+    replica enforces the same documented field rules. If the contract changes,
+    update both this model and API_DOCUMENTATION.md.
+    """
+    import datetime as dt
+    from pydantic import BaseModel, ConfigDict, Field
+
+    class ExternalElectricityExpense(BaseModel):
+        """Mirror of app_a_sachien/schemas.py::ExternalElectricityExpense."""
+        model_config = ConfigDict(extra="ignore")
+
+        id: int | str
+        reading_date: dt.date | None = None
+        bill_month: str | None = None
+        description: str
+        amount: Decimal
+        currency: str = "INR"
+        kind: str = Field(pattern="^(actual_bill|payment)$")
+        external_ref: str = Field(min_length=1)
+
     _seed_bill_and_payment(client)
-    from schemas import ExternalElectricityExpense  # noqa (App A's schema)
-    for raw in client.get("/integration/expenses").json():
+    items = client.get("/integration/expenses").json()
+    assert len(items) >= 2
+    for raw in items:
         rec = ExternalElectricityExpense.model_validate(raw)
         assert rec.kind in ("actual_bill", "payment")
 
 
 # ----------------------------- categories -----------------------------
 
-def test_categories_fetched_from_app_a(client):
+
+def test_categories_fetched_from_app_a(client, monkeypatch):
+    """When App A returns its documented category list, status shows app_a source."""
+    monkeypatch.setenv("EXPENSE_API_URL", "https://app-a.example.com")
+
     class Resp:
         status_code = 200
         def json(self):
-            return APP_A_CATEGORIES
+            return APP_A_CATEGORIES  # App A /categories serves a plain JSON list
+
     with patch("services.expense_client._session") as sess:
         sess.return_value.get.return_value = Resp()
         out = client.get("/integration/status").json()
@@ -105,10 +132,13 @@ def test_categories_fetched_from_app_a(client):
     assert out["mapped_category_for_electricity"] == "Bills"
 
 
-def test_app_a_down_falls_back_without_breaking_app_c(client):
+def test_app_a_down_falls_back_without_breaking_app_c(client, monkeypatch):
     """Peer outage must degrade gracefully, never crash or block App C."""
-    with patch("services.expense_client._session",
+    monkeypatch.setenv("EXPENSE_API_URL", "https://app-a.example.com")
+    with patch("services.expense_client._session") as sess, \
+         patch("services.expense_client.requests.post",
                side_effect=Exception("connection refused")):
+        sess.return_value.get.side_effect = Exception("connection refused")
         status = client.get("/integration/status").json()
         assert status["category_source"] == "local-default"
         push = client.post("/sync/push-expenses").json()
@@ -141,22 +171,23 @@ def test_repeated_sync_never_duplicates_on_app_a_side(readings):
 
 # ----------------------------- authentication -----------------------------
 
-def test_write_endpoints_protected_when_token_configured():
-    """With API_TOKEN set, missing/wrong bearer tokens are rejected."""
-    import importlib
-    import config as config_mod
-    importlib.reload(config_mod)
-    config_mod.get_settings.cache_clear()
-    os.environ["API_TOKEN"] = "secret-token"
-    os.environ.pop("ALLOW_UNAUTHENTICATED_WRITES", None)
-    config_mod.get_settings.cache_clear()
 
-    import database
-    import main
-    importlib.reload(main)
+def test_write_endpoints_protected_when_token_configured(monkeypatch):
+    """With API_TOKEN set, missing/wrong bearer tokens are rejected.
+
+    Auth is resolved per-request via get_settings(), so monkeypatching the
+    environment is enough — no module reloads (which would leak state into
+    other tests because config/settings objects are shared).
+    """
     from fastapi.testclient import TestClient
+    import database
+
+    monkeypatch.setenv("API_TOKEN", "secret-token")
+    monkeypatch.delenv("ALLOW_UNAUTHENTICATED_WRITES", raising=False)
+
     database.Base.metadata.drop_all(bind=database.engine)
-    with TestClient(main.app) as c:
+    database.init_db()
+    with TestClient(app) as c:  # `app` imported at module top of conftest pattern
         assert c.post("/readings", json={
             "reading_date": "2026-01-01", "reading_kwh": "1"}).status_code == 401
         assert c.post("/readings", json={
@@ -167,9 +198,3 @@ def test_write_endpoints_protected_when_token_configured():
             headers={"Authorization": "Bearer secret-token"}).status_code == 201
         # read endpoints stay open (least privilege for teammates)
         assert c.get("/integration/expenses").status_code == 200
-
-    # restore clean env for other tests
-    del os.environ["API_TOKEN"]
-    os.environ["ALLOW_UNAUTHENTICATED_WRITES"] = "1"
-    config_mod.get_settings.cache_clear()
-    importlib.reload(main)

@@ -19,7 +19,11 @@ from requests.adapters import HTTPAdapter, Retry
 from config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
+
+def _settings():
+    """Read current env every call (keeps tests and hot config changes honest)."""
+    return get_settings()
 
 
 class IntegrationError(Exception):
@@ -29,7 +33,7 @@ class IntegrationError(Exception):
 def _session() -> requests.Session:
     s = requests.Session()
     retries = Retry(
-        total=settings.HTTP_MAX_RETRIES,
+        total=_settings().HTTP_MAX_RETRIES,
         backoff_factor=0.5,
         status_forcelist=(502, 503, 504),
         allowed_methods=("GET",),
@@ -40,9 +44,10 @@ def _session() -> requests.Session:
 
 
 def _url(path: str) -> str:
-    if not settings.EXPENSE_API_URL:
+    cfg = _settings()
+    if not cfg.EXPENSE_API_URL:
         raise IntegrationError("EXPENSE_API_URL is not configured")
-    return f"{settings.EXPENSE_API_URL.rstrip('/')}{path}"
+    return f"{cfg.EXPENSE_API_URL.rstrip('/')}{path}"
 
 
 def fetch_categories() -> dict:
@@ -59,7 +64,7 @@ def fetch_categories() -> dict:
         resp = _session().get(
             _url("/categories"),
             headers={"Accept": "application/json"},
-            timeout=settings.HTTP_TIMEOUT_SECONDS,
+            timeout=_settings().HTTP_TIMEOUT_SECONDS,
         )
         if resp.status_code >= 400:
             raise IntegrationError(f"/categories returned HTTP {resp.status_code}")
@@ -71,21 +76,25 @@ def fetch_categories() -> dict:
     except (IntegrationError, requests.RequestException, ValueError) as exc:
         logger.warning("Could not fetch categories from App A: %s", exc)
         return {"source": "local-default", "reachable": False, "categories": defaults}
+    except Exception as exc:  # defensive: peer failure must never crash App C
+        logger.warning("Unexpected error fetching categories from App A: %s", exc)
+        return {"source": "local-default", "reachable": False, "categories": defaults}
 
 
 def health() -> dict:
-    if not settings.EXPENSE_API_URL:
+    cfg = _settings()
+    if not cfg.EXPENSE_API_URL:
         return {"configured": False, "reachable": False,
                 "error": "EXPENSE_API_URL is not configured"}
     try:
         resp = _session().get(
             _url("/health"), headers={"Accept": "application/json"},
-            timeout=settings.HTTP_TIMEOUT_SECONDS,
+            timeout=_settings().HTTP_TIMEOUT_SECONDS,
         )
         return {"configured": True, "reachable": resp.status_code < 400,
                 "detail": _safe_json(resp)}
     except (requests.RequestException, ValueError) as exc:
-        return {"configured": bool(settings.EXPENSE_API_URL),
+        return {"configured": bool(cfg.EXPENSE_API_URL),
                 "reachable": False, "error": str(exc)}
 
 
@@ -119,9 +128,9 @@ def post_expense(payload: dict) -> dict:
             json=body,
             headers={
                 "Accept": "application/json",
-                "Authorization": f"Bearer {settings.EXPENSE_API_TOKEN}",
+                "Authorization": f"Bearer {_settings().EXPENSE_API_TOKEN}",
             },
-            timeout=settings.HTTP_TIMEOUT_SECONDS,
+            timeout=_settings().HTTP_TIMEOUT_SECONDS,
         )
     except requests.RequestException as exc:
         raise IntegrationError(f"POST /expenses failed: {exc}") from exc
