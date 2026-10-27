@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Secrets & local config - never commit
+.env
+*.pem
+*.key
+
+# Databases (local dev only)
+*.db
+*.sqlite3
+
+# Test / tooling artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+mypy_cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
