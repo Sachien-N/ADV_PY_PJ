@@ -19,8 +19,22 @@ import plotly.express as px
 import requests
 import streamlit as st
 
-API_BASE = os.environ.get("EXPENSE_API_URL", "http://localhost:8001").rstrip("/")
-API_TOKEN = os.environ.get("EXPENSE_API_TOKEN", "")
+def _cfg(key: str, default: str = "") -> str:
+    """Env var first, then Streamlit Cloud secrets (st.secrets), then default."""
+    value = os.environ.get(key)
+    if value:
+        return value
+    try:
+        sec = st.secrets  # works on Streamlit Community Cloud
+        if key in sec:
+            return str(sec[key])
+    except Exception:
+        pass  # no secrets.toml configured (local dev)
+    return default
+
+
+API_BASE = _cfg("EXPENSE_API_URL", "http://localhost:8001").rstrip("/")
+API_TOKEN = _cfg("EXPENSE_API_TOKEN", "")
 
 st.set_page_config(page_title="Smart Expense & Budget Manager", page_icon="💰", layout="wide")
 st.title("💰 Smart Expense & Budget Manager")
